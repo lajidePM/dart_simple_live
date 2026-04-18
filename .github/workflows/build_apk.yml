@@ -9,7 +9,7 @@ on:
 
 jobs:
   # ==========================================
-  # 任务 1：编译 Android 端 (手机 + TV)
+  # 任务 1：编译 Android 端 (解决签名空指针崩溃)
   # ==========================================
   build-android:
     name: Build Android APKs
@@ -28,6 +28,30 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+
+      # [新增补丁]：动态生成一个临时的签名密钥，骗过项目的本地打包校验
+      - name: Fix Android Release Signing
+        run: |
+          # 1. 生成临时 keystore
+          keytool -genkey -v -keystore dummy.jks -keyalg RSA -keysize 2048 -validity 10000 -alias dummy -dname "CN=Dummy, OU=Dummy, O=Dummy, L=Dummy, S=Dummy, C=US" -storepass dummy123 -keypass dummy123
+          
+          # 2. 为手机端写入假密钥配置
+          cp dummy.jks simple_live_app/android/
+          cat << EOF > simple_live_app/android/key.properties
+          storePassword=dummy123
+          keyPassword=dummy123
+          keyAlias=dummy
+          storeFile=dummy.jks
+          EOF
+          
+          # 3. 为电视端写入假密钥配置
+          cp dummy.jks simple_live_tv_app/android/
+          cat << EOF > simple_live_tv_app/android/key.properties
+          storePassword=dummy123
+          keyPassword=dummy123
+          keyAlias=dummy
+          storeFile=dummy.jks
+          EOF
 
       - name: Build Phone App APK
         run: |
@@ -54,11 +78,12 @@ jobs:
           path: simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk
 
   # ==========================================
-  # 任务 2：编译 iOS 端 (未签名 IPA)
+  # 任务 2：编译 iOS 端 (解决旧版 Xcode 缺乏新 API 的问题)
   # ==========================================
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-latest # 必须使用苹果系统才能编译 iOS
+    # [关键修改]：将 macos-latest 强制改为 macos-14，以使用最新的 Xcode 15 环境
+    runs-on: macos-14 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -69,15 +94,19 @@ jobs:
           channel: 'stable'
           architecture: x64
 
+      # [新增补丁]：强制提升 iOS 编译兼容版本底线，匹配 connectivity_plus 插件要求
+      - name: Fix iOS Target Version
+        run: |
+          cd simple_live_app/ios
+          sed -i '' 's/platform :ios, .*/platform :ios, '\''13.0'\''/g' Podfile || true
+
       - name: Build iOS App (无签名模式)
         run: |
           cd simple_live_app
           flutter pub get
-          # 编译 iOS 产物，跳过代码签名
           flutter build ios --release --no-codesign
 
       - name: Package App into IPA
-        # 苹果的 .app 实际上是一个文件夹，我们需要把它放入 Payload 目录并压缩成 zip，然后改名为 .ipa
         run: |
           cd simple_live_app/build/ios/iphoneos
           mkdir Payload
