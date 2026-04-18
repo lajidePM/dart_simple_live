@@ -1,0 +1,91 @@
+name: Build Flutter Apps (Android & iOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - dev
+
+jobs:
+  # ==========================================
+  # 任务 1：编译 Android 端 (手机 + TV)
+  # ==========================================
+  build-android:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Build Phone App APK
+        run: |
+          cd simple_live_app
+          flutter pub get
+          flutter build apk --release
+
+      - name: Build TV App APK
+        run: |
+          cd simple_live_tv_app
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload Phone APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-Phone-APK
+          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload TV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-TV-APK
+          path: simple_live_tv_app/build/app/outputs/flutter-apk/app-release.apk
+
+  # ==========================================
+  # 任务 2：编译 iOS 端 (未签名 IPA)
+  # ==========================================
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest # 必须使用苹果系统才能编译 iOS
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+
+      - name: Build iOS App (无签名模式)
+        run: |
+          cd simple_live_app
+          flutter pub get
+          # 编译 iOS 产物，跳过代码签名
+          flutter build ios --release --no-codesign
+
+      - name: Package App into IPA
+        # 苹果的 .app 实际上是一个文件夹，我们需要把它放入 Payload 目录并压缩成 zip，然后改名为 .ipa
+        run: |
+          cd simple_live_app/build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -qq -r SimpleLive-iOS-Unsigned.ipa Payload
+
+      - name: Upload iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-iOS-IPA
+          path: simple_live_app/build/ios/iphoneos/SimpleLive-iOS-Unsigned.ipa
